@@ -1051,141 +1051,27 @@ parseReference(Head, Context, Tail, State) ->
 %% Before starting to work on this entity, we need to check that we are not already 
 %% parsing this entity (because that would mean an infinite loop).
 translateReference(Reference, Context, Tail, State) ->
-  %% in the context of a definition, character references have to be replaced
-  %% (and others not). 
-  case Reference of
-    [$#, $x | Tail1] -> %% hex number of char's code point
-      %% unfortunately this function accepts illegal values
-      %% to do: replace by something that throws an error in case of
-      %% an illegal value
-      {[httpd_util:hexlist_to_integer(Tail1)], Tail, State};
-    [$# | Tail1] -> %% dec number of char's code point
-      case catch list_to_integer(Tail1) of
-        {'EXIT', _} -> throw({error, "Malformed: Illegal character in reference"});
-	%% to do: check on legal character.
-	Other -> {[Other], Tail, State}
-      end;
-    _ -> 
-      translateReferenceNonCharacter(Reference, Context, Tail, State)
-  end.
-
-translateReferenceNonCharacter(Reference, Context, Tail, 
-  State = #erlsom_sax_state{current_entity = CurrentEntity, 
-                            max_entity_depth = MaxDepth,
-                            entity_relations = Relations,
-                            entity_size_acc = TotalSize,
-                            max_expanded_entity_size = MaxSize}) ->
-  case Context of 
-    definition ->
-      case MaxDepth of
-        0 -> throw({error, "Entities nested too deep"});
-        _ -> ok
-      end,
-      %% check on circular definition
-      NewRelation = {CurrentEntity, Reference},
-      case lists:member(NewRelation, Relations) of
-        true ->
-          Relations2 = Relations;
-        false ->
-          Relations2 = [NewRelation | Relations],
-          case erlsom_sax_lib:findCycle(Reference, CurrentEntity, Relations2, MaxDepth) of
-            cycle -> 
-              throw({error, "Malformed: Cycle in entity definitions"});
-            max_depth -> 
-              throw({error, "Entities nested too deep"});
-            _ -> ok
-          end
-      end,
-      %% don't replace
-      {lists:reverse("&" ++ Reference ++ ";"), Tail, State#erlsom_sax_state{entity_relations = Relations2}};
-    _ ->
-      {Translation, Type} = nowFinalyTranslate(Reference, Context, State),
-      NewTotal = TotalSize + length(Translation),
-      if
-        NewTotal > MaxSize ->
-          throw({error, "Too many characters in expanded entities"});
-        true ->
-          ok
-      end,
-      case Context of attribute ->
-        %% replace, add to the parsed text (head)
-        {Translation, Tail, State#erlsom_sax_state{entity_size_acc = NewTotal}};
-      _ -> %% element or parameter
-        case Type of 
-          user_defined ->
-            %% replace, encode again and put back into the input stream (Tail)
-            TEncoded = encode(Translation),
-            {[], combine(TEncoded, Tail), State#erlsom_sax_state{entity_size_acc = NewTotal}};
-          _ ->
-            {Translation, Tail, State#erlsom_sax_state{entity_size_acc = NewTotal}}
-        end
-      end
-  end.
-
-nowFinalyTranslate(Reference, Context, State) ->
-  case Reference of
-    "amp" -> {[$&], other};
-    "lt" -> {[$<], other};
-    "gt" -> {[$>], other};
-    "apos" -> {[39], other}; %% apostrof
-    "quot" -> {[34], other}; %% quote
-  _ -> 
-    case State#erlsom_sax_state.expand_entities of
-      true -> 
-        ListOfEntities = case Context of 
-          parameter -> State#erlsom_sax_state.par_entities;
-          element -> State#erlsom_sax_state.entities
-        end,
-        case lists:keysearch(Reference, 1, ListOfEntities) of
-          {value, {_, EntityText}} -> 
-            {EntityText, user_defined};
-          _ ->
-            throw({error, "Malformed: unknown reference: " ++ Reference})
-        end;
-      false ->
-        throw({error, "Entity expansion disabled, found reference " ++ Reference})
-    end
-  end.
-
-%% TODO: proper encoding
--ifdef(BINARY).
-combine(Head, Tail) ->
-  <<Head/binary, Tail/binary>>.
--endif.
-
+    erlsom_sax_lib:translateReference(encoding(),Reference, Context, Tail, State).
+    
+    
 -ifdef(UTF8).
-encode(List) ->
-  list_to_binary(erlsom_ucs:to_utf8(List)).
+encoding() -> utf8.
 -endif.
-
 -ifdef(U16B).
-encode(List) ->
-  list_to_binary(xmerl_ucs:to_utf16be(List)).
+encoding() -> u16b.
 -endif.
-
 -ifdef(U16L).
-encode(List) ->
-  list_to_binary(xmerl_ucs:to_utf16le(List)).
+encoding() -> u16l.
 -endif.
-
 -ifdef(LAT1).
-encode(List) ->
-  list_to_binary(List).
+encoding() -> lat1.
 -endif.
-
 -ifdef(LAT9).
-encode(List) ->
-  list_to_binary(List).
+encoding() -> lat9.
 -endif.
-
 -ifdef(LIST).
-encode(List) ->
-  List.
-
-combine(Head, Tail) ->
-  Head ++ Tail.
+encoding() -> list.
 -endif.
-
 
 encodeOutput(List, #erlsom_sax_state{output = 'utf8'}) ->
   list_to_binary(erlsom_ucs:to_utf8(List));

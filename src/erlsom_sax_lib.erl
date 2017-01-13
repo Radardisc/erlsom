@@ -38,7 +38,7 @@
 -export([mapStartPrefixMappingCallback/3]).
 -export([mapEndPrefixMappingCallback/3]).
 -export([createStartTagEvent/3]).
--export([translateReference/3]).
+-export([translateReference/5]).
 
 %% there are 4 variants of this function, with different numbers of arguments
 %% The names of the first arguments aren't really meaningful, they can
@@ -250,7 +250,92 @@ findCycle(To, Current, Edges, MaxD, CurrentD) ->
   end.
   
   
-translateReference(Reference, Context, State) ->
+
+%% returns: {Head2, Tail2, State2}
+%% Character entities are added to the 'head' (the bit that was parsed already),
+%% other entities are added to the tail (they still have to be parsed).
+%% The problem here is that we have to make sure that we don't get into an infinite 
+%% loop. This solved as follows:
+%% We proceed by parsing only the entity (while registring in the state that we 
+%% are parsing this particular entity). However, we replace the continuation function 
+%% by something that simply returns (in stead of calling the function that it was 
+%% working on recursively). We then proceed. 
+%% Before starting to work on this entity, we need to check that we are not already 
+%% parsing this entity (because that would mean an infinite loop).
+translateReference(Encoding, Reference, Context, Tail, State) ->
+  %% in the context of a definition, character references have to be replaced
+  %% (and others not). 
+  case Reference of
+    [$#, $x | Tail1] -> %% hex number of char's code point
+      %% unfortunately this function accepts illegal values
+      %% to do: replace by something that throws an error in case of
+      %% an illegal value
+      {[httpd_util:hexlist_to_integer(Tail1)], Tail, State};
+    [$# | Tail1] -> %% dec number of char's code point
+      case catch list_to_integer(Tail1) of
+        {'EXIT', _} -> throw({error, "Malformed: Illegal character in reference"});
+	%% to do: check on legal character.
+	Other -> {[Other], Tail, State}
+      end;
+    _ -> 
+      translateReferenceNonCharacter(Encoding,Reference, Context, Tail, State)
+  end.
+
+translateReferenceNonCharacter(Encoding,Reference, Context, Tail, 
+  State = #erlsom_sax_state{current_entity = CurrentEntity, 
+                            max_entity_depth = MaxDepth,
+                            entity_relations = Relations,
+                            entity_size_acc = TotalSize,
+                            max_expanded_entity_size = MaxSize}) ->
+  case Context of 
+    definition ->
+      case MaxDepth of
+        0 -> throw({error, "Entities nested too deep"});
+        _ -> ok
+      end,
+      %% check on circular definition
+      NewRelation = {CurrentEntity, Reference},
+      case lists:member(NewRelation, Relations) of
+        true ->
+          Relations2 = Relations;
+        false ->
+          Relations2 = [NewRelation | Relations],
+          case erlsom_sax_lib:findCycle(Reference, CurrentEntity, Relations2, MaxDepth) of
+            cycle -> 
+              throw({error, "Malformed: Cycle in entity definitions"});
+            max_depth -> 
+              throw({error, "Entities nested too deep"});
+            _ -> ok
+          end
+      end,
+      %% don't replace
+      {lists:reverse("&" ++ Reference ++ ";"), Tail, State#erlsom_sax_state{entity_relations = Relations2}};
+    _ ->
+      {Translation, Type} = finallyTranslateReference(Reference, Context, State),
+      NewTotal = TotalSize + length(Translation),
+      if
+        NewTotal > MaxSize ->
+          throw({error, "Too many characters in expanded entities"});
+        true ->
+          ok
+      end,
+      case Context of attribute ->
+        %% replace, add to the parsed text (head)
+        {Translation, Tail, State#erlsom_sax_state{entity_size_acc = NewTotal}};
+      _ -> %% element or parameter
+        case Type of 
+          user_defined ->
+            %% replace, encode again and put back into the input stream (Tail)
+            TEncoded = encode(Encoding,Translation),
+            {[], combine(TEncoded, Tail), State#erlsom_sax_state{entity_size_acc = NewTotal}};
+          _ ->
+            {Translation, Tail, State#erlsom_sax_state{entity_size_acc = NewTotal}}
+        end
+      end
+  end.
+  
+  
+finallyTranslateReference(Reference, Context, State) ->
   case Reference of
     "amp" -> {[$&], other};
     "lt" -> {[$<], other};
@@ -275,7 +360,28 @@ translateReference(Reference, Context, State) ->
     end
   end.  
 
-  
+
+
+combine(Head, Tail) when is_binary(Head), is_binary(Tail) ->
+    <<Head/binary, Tail/binary>>;
+combine(Head, Tail) when is_list(Head), is_list(Tail) ->
+    Head ++ Tail.
+
+%The encoding parameter comes from each of the calling sax files.
+encode(utf8,List) ->
+  list_to_binary(erlsom_ucs:to_utf8(List));
+encode(u16b,List) ->
+  list_to_binary(xmerl_ucs:to_utf16be(List));
+encode(u16l,List) ->
+  list_to_binary(xmerl_ucs:to_utf16le(List));
+encode(lat1,List) ->
+  list_to_binary(List);
+encode(lat9,List) ->
+  list_to_binary(List);
+encode(list,List) ->
+  List.
+
+
 
 test() ->
   false = findCycle(b, a, [{a, b}], 2),

@@ -208,4 +208,7 @@ getOptions([{max_nr_of_entities, V} | T], S)
   getOptions(T, S#erlsom_sax_state{max_nr_of_entities = V});
 getOptions([{max_expanded_entity_size, V} | T], S) 
     when is_integer(V); V == infinity ->
-  getOptions(T, S#erlsom_sax_state{max_expanded_entity_size = V}).
+  getOptions(T, S#erlsom_sax_state{max_expanded_entity_size = V});
+getOptions([{permit_errors, List} | T], S) when is_list(List) ->
+  getOptions(T, S#erlsom_sax_state{permit_errors= List}).
+  

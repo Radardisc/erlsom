@@ -223,7 +223,8 @@ parseProlog(?STR2_T($<, $!, Tail) = T, State) ->
     ?STR1($D) -> ?CF3(T, State, fun parseProlog/2);
     ?STR1($-) -> ?CF3(T, State, fun parseProlog/2);
     ?EMPTY -> ?CF3(T, State, fun parseProlog/2);
-    _ -> throw({error, "Malformed: Illegal character in prolog"})
+    _ ->
+        throw({error, "Malformed: Illegal character in prolog"})
   end;
 parseProlog(?STR1_T($<, Tail), State) ->
   parseContentLT(Tail, State);
@@ -238,8 +239,8 @@ parseProlog(?BOM2, State) ->
   ?CF3(?BOM2, State, fun parseProlog/2);
 parseProlog(?BOM3, State) ->
   ?CF3(?BOM3, State, fun parseProlog/2);
-parseProlog(_Tail, _) ->
-  throw({error, "Malformed: Illegal character in prolog"}).
+parseProlog(_Tail, _State) ->
+    throw({error, "Malformed: Illegal character in prolog"}).
 
 -ifdef(UTF8).
 %% Decode the next character

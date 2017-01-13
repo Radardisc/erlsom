@@ -39,6 +39,8 @@
 -export([mapEndPrefixMappingCallback/3]).
 -export([createStartTagEvent/3]).
 -export([translateReference/5]).
+%-export([malformedPrologCheck/1]).
+
 
 %% there are 4 variants of this function, with different numbers of arguments
 %% The names of the first arguments aren't really meaningful, they can
@@ -335,7 +337,7 @@ translateReferenceNonCharacter(Encoding,Reference, Context, Tail,
   end.
   
   
-finallyTranslateReference(Reference, Context, State) ->
+finallyTranslateReference(Reference, Context, #erlsom_sax_state{ permit_errors=PermissableErrors }=State ) ->
   case Reference of
     "amp" -> {[$&], other};
     "lt" -> {[$<], other};
@@ -353,7 +355,12 @@ finallyTranslateReference(Reference, Context, State) ->
           {value, {_, EntityText}} -> 
             {EntityText, user_defined};
           _ ->
-            throw({error, "Malformed: unknown reference: " ++ Reference})
+            case lists:member(unknown_reference, PermissableErrors) of
+                true ->
+                    { "", user_defined };
+                _ ->
+                    throw({error, "Malformed: unknown reference: " ++ Reference})
+            end
         end;
       false ->
         throw({error, "Entity expansion disabled, found reference " ++ Reference})
@@ -380,7 +387,6 @@ encode(lat9,List) ->
   list_to_binary(List);
 encode(list,List) ->
   List.
-
 
 
 test() ->

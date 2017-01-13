@@ -38,6 +38,7 @@
 -export([mapStartPrefixMappingCallback/3]).
 -export([mapEndPrefixMappingCallback/3]).
 -export([createStartTagEvent/3]).
+-export([translateReference/3]).
 
 %% there are 4 variants of this function, with different numbers of arguments
 %% The names of the first arguments aren't really meaningful, they can
@@ -247,6 +248,34 @@ findCycle(To, Current, Edges, MaxD, CurrentD) ->
           Other
       end
   end.
+  
+  
+translateReference(Reference, Context, State) ->
+  case Reference of
+    "amp" -> {[$&], other};
+    "lt" -> {[$<], other};
+    "gt" -> {[$>], other};
+    "apos" -> {[39], other}; %% apostrof
+    "quot" -> {[34], other}; %% quote
+  _ -> 
+    case State#erlsom_sax_state.expand_entities of
+      true -> 
+        ListOfEntities = case Context of 
+          parameter -> State#erlsom_sax_state.par_entities;
+          element -> State#erlsom_sax_state.entities
+        end,
+        case lists:keysearch(Reference, 1, ListOfEntities) of
+          {value, {_, EntityText}} -> 
+            {EntityText, user_defined};
+          _ ->
+            throw({error, "Malformed: unknown reference: " ++ Reference})
+        end;
+      false ->
+        throw({error, "Entity expansion disabled, found reference " ++ Reference})
+    end
+  end.  
+
+  
 
 test() ->
   false = findCycle(b, a, [{a, b}], 2),

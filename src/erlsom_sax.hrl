@@ -53,7 +53,8 @@
    entity_size_acc = 0, %% accumulated size of entities
    continuation_fun,
    %% entity_relations is used to check on circular definitions
-   entity_relations = []}).
+   entity_relations = [],
+   permit_errors=[] }).
 
 %% useful macro approach copied from xmerl
 -define(space, 32).
